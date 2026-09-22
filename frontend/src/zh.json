@@ -38,6 +38,8 @@
   "Save relationships": "保存关联",
   "Changes are saved to Feishu. Cycles are rejected. Parent tasks do not imply dependencies.": "变更将保存至飞书，循环关联将被拒绝。父子关系不代表执行依赖。",
   "Cycles detected. Review the highlighted tasks; these relationships are not a DAG.": "检测到循环关联，请检查高亮任务。当前关系不是有向无环图。",
+  "Expand all": "全部展开",
+  "Collapse all": "全部收起",
   "Expand {title}": "展开 {title}",
   "Collapse {title}": "收起 {title}",
   "Explore {title}": "查看 {title} 的关联",

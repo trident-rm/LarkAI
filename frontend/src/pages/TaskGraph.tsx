@@ -420,7 +420,7 @@ export function TaskGraph({
                         )}
                       </span>
                       <span className="graph-node-owner">
-                        {item?.owners.map((m) => m.name || m.id).join(", ") ||
+                        {item?.owners.map((m) => m.name || m.email || m.id).join(", ") ||
                           t("Unassigned")}
                       </span>
                     </button>
@@ -502,7 +502,7 @@ export function TaskGraph({
               <dl>
                 <dt>{t("Owner")}</dt>
                 <dd>
-                  {task.owners.map((m) => m.name || m.id).join(", ") ||
+                  {task.owners.map((m) => m.name || m.email || m.id).join(", ") ||
                     t("Unassigned")}
                 </dd>
                 <dt>{t("Due date")}</dt>

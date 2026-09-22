@@ -6,6 +6,8 @@ Sources:
 
 - Task-v2 `my_tasks`, with full pagination. Upserts preserve local priority, divisions and the cancelled marker; one user's view never prunes another user's cached tasks.
 - Every table in the configured Bitable, resolved from `FEISHU_BITABLE_APP_TOKEN` or `FEISHU_WIKI_NODE_TOKEN`. Configure field names in `.env` to match your base. Task IDs include the source table ID.
+
+Each sync also reads the person field (`FEISHU_BITABLE_OWNER_FIELD`, default `负责人`) and refreshes the member directory with the display names the base stores, so members are shown by name instead of `ou_...` ids even when the contact API is scope-limited. Run **Refresh members** for the same enrichment without waiting for a sync.
 - Calendar events for `FEISHU_CALENDAR_ID`, or the first reachable calendar when unset.
 
 Each source reports failure independently. Failed sources retain their previous cache; successful Bitable/calendar snapshots replace their source transactionally. The dashboard shows the last collection time and any warnings. Detailed errors go to server logs. The timeline derives task events from current tasks, so local completion/deletion immediately updates it.

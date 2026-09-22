@@ -35,7 +35,7 @@ docker run -d --name larkai -p 8000:8000 --env-file .env \
 
 Use one container per SQLite database. Named volumes created by this image inherit its writable directory. For an existing bind mount or old volume, grant UID/GID 10001 write access before starting the image. Health is `GET /healthz`; it does not require identity or Cloudflare Access.
 
-The rewrite starts a fresh `larkai.sqlite3`. Existing `rmtask.db` and Flask session files are ignored. Users sign in and reconnect Feishu. Refresh members, then sync to rebuild the data. Existing environment values may remain, but `FLASK_SECRET_KEY`, `RM_DB_PATH`, `RM_MOCK_DATA_DIR` and `FEISHU_BITABLE_TASKS_TABLE_ID` no longer configure the new runtime. Use `DATABASE_PATH`; Bitable mutations use the task's recorded source table.
+The rewrite starts a fresh `larkai.sqlite3`. Existing `rmtask.db` and Flask session files are ignored. Users sign in and reconnect Feishu. Refresh members, then sync to rebuild the data. Existing environment values may remain, but `FLASK_SECRET_KEY`, `RM_DB_PATH` and `RM_MOCK_DATA_DIR` no longer configure the new runtime. Use `DATABASE_PATH`. For live task creation set `FEISHU_BITABLE_SUBMIT_TABLE_ID`; `FEISHU_BITABLE_TASKS_TABLE_ID` is still honored as the submit-table fallback. Bitable mutations use the task's recorded source table.
 
 ## Existing GitHub/VPS flow
 

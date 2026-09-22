@@ -26,7 +26,7 @@ For live OAuth through Vite, set `FEISHU_REDIRECT_URI=http://127.0.0.1:5173/oaut
 
 ## Live mode
 
-Set `FEISHU_MODE=live`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_REDIRECT_URI` and the required `FEISHU_SCOPES`. Configure `FEISHU_BITABLE_APP_TOKEN` or `FEISHU_WIKI_NODE_TOKEN` for Bitable collection. Set `FEISHU_BITABLE_SUBMIT_TABLE_ID` to create tasks in that table; otherwise tasks use task-v2. Each Bitable task retains its source table, so updates and deletes return to the correct table.
+Set `FEISHU_MODE=live`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_REDIRECT_URI` and the required `FEISHU_SCOPES`. Configure `FEISHU_BITABLE_APP_TOKEN` or `FEISHU_WIKI_NODE_TOKEN` for Bitable collection. When a Bitable is configured, set `FEISHU_BITABLE_SUBMIT_TABLE_ID` (the tracked 任务管理表 id) so created tasks land in the collected base; creation is refused with an actionable error instead of silently creating a task-v2 item that never appears on the board. `FEISHU_BITABLE_TASKS_TABLE_ID` remains a legacy submit-table fallback. Task-v2 creation is only used when no Bitable is configured. Each Bitable task retains its source table, so updates and deletes return to the correct table.
 
 Production uses Herkules OIDC for website sign-in and a separate Feishu connection linked to the immutable OIDC subject. Herkules UserInfo controls admin roles. Without OIDC, `FEISHU_ADMIN_OPEN_IDS` controls admins; if unset, the first Feishu login becomes admin.
 

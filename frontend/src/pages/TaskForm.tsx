@@ -121,7 +121,9 @@ export function TaskForm({
         />
         <div className="chips">
           {members
-            .filter((m) => m.name.toLowerCase().includes(q.toLowerCase()))
+            .filter((m) =>
+              `${m.name} ${m.email}`.toLowerCase().includes(q.toLowerCase()),
+            )
             .map((m) => (
               <label key={m.id}>
                 <input
@@ -135,7 +137,7 @@ export function TaskForm({
                     )
                   }
                 />
-                {m.name || m.id}
+                {m.name || m.email || m.id}
               </label>
             ))}
         </div>

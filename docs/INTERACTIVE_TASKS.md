@@ -4,9 +4,9 @@ The React task board creates tasks, updates their status and deletes tasks throu
 
 ## Source mapping
 
-When `FEISHU_BITABLE_SUBMIT_TABLE_ID` is configured, creation uses `POST /bitable/v1/apps/{base}/tables/{table}/records`. Column names come from `FEISHU_BITABLE_*_FIELD`. Categories and divisions come from the table's field options when available. Failed Bitable creation is reported; it never silently creates a task in a different system.
+When a Bitable is configured, creation uses `POST /bitable/v1/apps/{base}/tables/{table}/records` with the table from `FEISHU_BITABLE_SUBMIT_TABLE_ID` (or the legacy `FEISHU_BITABLE_TASKS_TABLE_ID` fallback). Column names come from `FEISHU_BITABLE_*_FIELD`. Categories and divisions come from the table's field options when available. A missing submit table id is refused with an actionable error instead of silently creating a task in a different system.
 
-Without a submit table, creation uses `POST /task/v2/tasks`. Deadlines use milliseconds in a string-valued `due.timestamp`; members carry `role=assignee`. Priority is local because task-v2 has no priority field. Completion uses PATCH with `task.completed_at` and `update_fields=["completed_at"]`. Cancellation also completes the upstream task and retains a local cancelled marker.
+When no Bitable is configured at all, creation uses `POST /task/v2/tasks`. Deadlines use milliseconds in a string-valued `due.timestamp`; members carry `role=assignee`. Priority is local because task-v2 has no priority field. Completion uses PATCH with `task.completed_at` and `update_fields=["completed_at"]`. Cancellation also completes the upstream task and retains a local cancelled marker.
 
 Bitable completion/cancellation uses PUT to the original record's table, with status `已完成`/`已放弃`. Deletion uses the source-specific DELETE endpoint and requires admin access. Bitable records must use the configured task name field to be mirrored; customize the field mapping for your base rather than relying on heuristic title detection.
 

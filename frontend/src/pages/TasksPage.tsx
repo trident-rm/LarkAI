@@ -7,8 +7,16 @@ import {
   needsAttention,
   taskOrder,
 } from "../taskView";
-import { Plus, Search, Clock3, Users, Trash2 } from "lucide-react";
-import type { Task, Member, PageProps } from "../types";
+import {
+  Plus,
+  Search,
+  Clock3,
+  Users,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
+import type { Task, Member, PageProps, Session } from "../types";
 import { useData } from "../useData";
 import { formatDate } from "../api";
 import { Heading, Load, Empty, Badge, LinkOut } from "../components";
@@ -23,7 +31,7 @@ export function TasksPage({
   busy,
   personal = false,
 }: PageProps & { personal?: boolean }) {
-  const { t: translate, locale } = usePreferences();
+  const { t: translate } = usePreferences();
   const [params, setParams] = useSearchParams();
   const [view, setView] = useState(params.has("task") ? "graph" : "board");
   const [selected, setSelected] = useState<string | undefined>(
@@ -35,6 +43,8 @@ export function TasksPage({
   const [hideFinished, setHideFinished] = useState(personal);
   const [group, setGroup] = useState(personal ? "none" : "status");
   const [creating, setCreating] = useState(false);
+  const [openCards, setOpenCards] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const state = useData<Task[]>("/tasks?q=&status=", revision, true);
   const members = useData<Member[]>(
     creating ? "/members" : undefined,
@@ -44,7 +54,22 @@ export function TasksPage({
     creating ? "/task-options" : undefined,
     revision,
   );
-  const [confirm, setConfirm] = useState<string>();
+  const toggleCard = (id: string) =>
+    setOpenCards((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleGroup = (key: string) =>
+    setOpenGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const titleOf = (label: string) =>
+    translate(label) === label ? label.replaceAll("_", " ") : translate(label);
   return (
     <>
       <Heading
@@ -256,6 +281,28 @@ export function TasksPage({
                     ))}
                   </select>
                 )}
+                {view === "board" && tasks.length > 0 && (
+                  <>
+                    <button
+                      className="collapse-all"
+                      onClick={() => {
+                        setOpenGroups(new Set(Object.keys(groups)));
+                        setOpenCards(new Set(tasks.map((t) => t.id)));
+                      }}
+                    >
+                      {translate("Expand all")}
+                    </button>
+                    <button
+                      className="collapse-all"
+                      onClick={() => {
+                        setOpenGroups(new Set());
+                        setOpenCards(new Set());
+                      }}
+                    >
+                      {translate("Collapse all")}
+                    </button>
+                  </>
+                )}
               </div>
               {!tasks.length && (
                 <Empty>
@@ -282,132 +329,63 @@ export function TasksPage({
                     personal ? "task-groups personal-tasks" : "task-groups"
                   }
                 >
-                  {Object.entries(groups).map(([label, items]) => (
-                    <section className="task-group" key={label}>
-                      <h2>
-                        {translate(label) === label
-                          ? label.replaceAll("_", " ")
-                          : translate(label)}{" "}
-                        <span className="count">{items.length}</span>
-                      </h2>
-                      {items.map((t) => (
-                        <article className="task-card" key={t.id}>
-                          <div className="card-meta">
-                            <Badge value={t.status} />
-                            <Badge value={t.priority} />
-                            <LinkOut url={t.url} />
-                          </div>
-                          <h3>{t.title}</h3>
-                          {overdueTask(t) && (
-                            <span className="overdue-label">
-                              {translate("Overdue")}
-                            </span>
-                          )}
-                          {isBlocked(t, index.byId) && (
-                            <span className="blocked-label">
-                              {translate("Blocked")}
-                            </span>
-                          )}
-                          <p>{t.description}</p>
-                          <div className="task-info">
-                            <span>
-                              <Clock3 size={14} />
-                              {formatDate(t.due, locale)}
-                            </span>
-                            <span>
-                              <Users size={14} />
-                              {t.owners.map((m) => m.name || m.id).join(", ") ||
-                                translate("Unassigned")}
-                            </span>
-                            {!!t.divisions.length && (
-                              <span>{t.divisions.join(" · ")}</span>
+                  {Object.entries(groups).map(([label, items]) => {
+                    const groupOpen = openGroups.has(label);
+                    const title = titleOf(label);
+                    return (
+                      <section className="task-group" key={label}>
+                        <div
+                          className="group-summary"
+                          onClick={() => toggleGroup(label)}
+                        >
+                          <button
+                            type="button"
+                            className="card-toggle"
+                            aria-expanded={groupOpen}
+                            aria-label={translate(
+                              groupOpen ? "Collapse {title}" : "Expand {title}",
+                              { title },
                             )}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleGroup(label);
+                            }}
+                          >
+                            {groupOpen ? (
+                              <ChevronDown size={16} />
+                            ) : (
+                              <ChevronRight size={16} />
+                            )}
+                          </button>
+                          <h2>
+                            {title}{" "}
+                            <span className="count">{items.length}</span>
+                          </h2>
+                        </div>
+                        {groupOpen && (
+                          <div className="task-group-body">
+                            {items.map((t) => (
+                              <TaskCard
+                                key={t.id}
+                                task={t}
+                                byId={index.byId}
+                                personal={personal}
+                                session={session}
+                                busy={busy}
+                                mutate={mutate}
+                                open={openCards.has(t.id)}
+                                onToggle={() => toggleCard(t.id)}
+                                onExplore={() => {
+                                  setSelected(t.id);
+                                  setView("graph");
+                                }}
+                              />
+                            ))}
                           </div>
-                          <div className="card-actions">
-                            <button
-                              onClick={() => {
-                                setSelected(t.id);
-                                setView("graph");
-                              }}
-                            >
-                              {translate("Explore graph")}
-                            </button>
-                            <select
-                              aria-label={translate("Status for {title}", {
-                                title: t.title,
-                              })}
-                              value={t.status}
-                              disabled={busy || !session.connected}
-                              onChange={(event) => {
-                                const actions: Record<string, string> = {
-                                  pending: "reopen",
-                                  in_progress: "start",
-                                  paused: "pause",
-                                  completed: "complete",
-                                  cancelled: "cancel",
-                                };
-                                void mutate(
-                                  `/tasks/${encodeURIComponent(t.id)}/${actions[event.target.value]}`,
-                                );
-                              }}
-                            >
-                              {[
-                                "pending",
-                                "in_progress",
-                                "paused",
-                                "completed",
-                                "cancelled",
-                              ]
-                                .filter(
-                                  (status) =>
-                                    t.source === "bitable" ||
-                                    session.mode === "mock" ||
-                                    status === t.status ||
-                                    ["completed", "cancelled"].includes(status),
-                                )
-                                .map((status) => (
-                                  <option key={status} value={status}>
-                                    {translate(status)}
-                                  </option>
-                                ))}
-                            </select>
-                            {session.user?.role === "admin" &&
-                              (confirm === t.id ? (
-                                <>
-                                  <button
-                                    className="danger"
-                                    disabled={busy}
-                                    onClick={async () => {
-                                      if (
-                                        await mutate(
-                                          `/tasks/${encodeURIComponent(t.id)}/delete`,
-                                        )
-                                      )
-                                        setConfirm(undefined);
-                                    }}
-                                  >
-                                    {translate("Confirm delete")}
-                                  </button>
-                                  <button onClick={() => setConfirm(undefined)}>
-                                    {translate("Keep")}
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  className="icon-button"
-                                  aria-label={translate("Delete {title}", {
-                                    title: t.title,
-                                  })}
-                                  onClick={() => setConfirm(t.id)}
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              ))}
-                          </div>
-                        </article>
-                      ))}
-                    </section>
-                  ))}
+                        )}
+                      </section>
+                    );
+                  })}
                 </div>
               )}
             </>
@@ -415,5 +393,162 @@ export function TasksPage({
         }}
       </Load>
     </>
+  );
+}
+
+function TaskCard({
+  task,
+  byId,
+  personal,
+  session,
+  busy,
+  mutate,
+  open,
+  onToggle,
+  onExplore,
+}: {
+  task: Task;
+  byId: Map<string, Task>;
+  personal: boolean;
+  session: Session;
+  busy: boolean;
+  mutate: PageProps["mutate"];
+  open: boolean;
+  onToggle: () => void;
+  onExplore: () => void;
+}) {
+  const { t: translate, locale } = usePreferences();
+  const [confirming, setConfirming] = useState(false);
+  const blocked = isBlocked(task, byId);
+  const label = translate(open ? "Collapse {title}" : "Expand {title}", {
+    title: task.title,
+  });
+  return (
+    <article className={`task-card${personal ? " personal-task" : ""}`}>
+      <div className="card-summary" onClick={onToggle}>
+        <button
+          type="button"
+          className="card-toggle"
+          aria-expanded={open}
+          aria-label={label}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+        >
+          {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+        <span className="card-meta">
+          <Badge value={task.status} />
+          <Badge value={task.priority} />
+        </span>
+        <div className="card-heading">
+          <h3 className="card-title">{task.title}</h3>
+          <span className="card-subtitle">
+            {task.owners.map((m) => m.name || m.email || m.id).join(", ") ||
+              translate("Unassigned")}
+            {task.due && ` · ${formatDate(task.due, locale)}`}
+          </span>
+        </div>
+        {overdueTask(task) && (
+          <span className="overdue-label">{translate("Overdue")}</span>
+        )}
+        {blocked && (
+          <span className="blocked-label">{translate("Blocked")}</span>
+        )}
+      </div>
+      {open && (
+        <div className="task-card-body">
+          {task.url && (
+            <div className="card-meta card-meta-links">
+              <LinkOut url={task.url} />
+            </div>
+          )}
+          <p>{task.description}</p>
+          <div className="task-info">
+            <span>
+              <Clock3 size={14} />
+              {formatDate(task.due, locale)}
+            </span>
+            <span>
+              <Users size={14} />
+              {task.owners.map((m) => m.name || m.email || m.id).join(", ") ||
+                translate("Unassigned")}
+            </span>
+            {!!task.divisions.length && (
+              <span>{task.divisions.join(" · ")}</span>
+            )}
+          </div>
+          <div className="card-actions">
+            <button onClick={onExplore}>{translate("Explore graph")}</button>
+            <select
+              aria-label={translate("Status for {title}", {
+                title: task.title,
+              })}
+              value={task.status}
+              disabled={busy || !session.connected}
+              onChange={(event) => {
+                const actions: Record<string, string> = {
+                  pending: "reopen",
+                  in_progress: "start",
+                  paused: "pause",
+                  completed: "complete",
+                  cancelled: "cancel",
+                };
+                void mutate(
+                  `/tasks/${encodeURIComponent(task.id)}/${actions[event.target.value]}`,
+                );
+              }}
+            >
+              {["pending", "in_progress", "paused", "completed", "cancelled"]
+                .filter(
+                  (status) =>
+                    task.source === "bitable" ||
+                    session.mode === "mock" ||
+                    status === task.status ||
+                    ["completed", "cancelled"].includes(status),
+                )
+                .map((status) => (
+                  <option key={status} value={status}>
+                    {translate(status)}
+                  </option>
+                ))}
+            </select>
+            {session.user?.role === "admin" &&
+              (confirming ? (
+                <>
+                  <button
+                    className="danger"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (
+                        await mutate(
+                          `/tasks/${encodeURIComponent(task.id)}/delete`,
+                        )
+                      )
+                        setConfirming(false);
+                    }}
+                  >
+                    {translate("Confirm delete")}
+                  </button>
+                  <button onClick={() => setConfirming(false)}>
+                    {translate("Keep")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="icon-button"
+                  aria-label={translate("Delete {title}", {
+                    title: task.title,
+                  })}
+                  onClick={() => setConfirming(true)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </article>
   );
 }

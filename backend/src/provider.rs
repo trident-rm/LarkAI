@@ -186,9 +186,16 @@ pub async fn user_token(app: &App, subject: &str) -> anyhow::Result<String> {
     Ok(token)
 }
 fn member(v: &Value) -> Member {
+    let id = text(&v["id"]);
+    let name = text(&v["name"]);
+    let name = if name.is_empty() || name == id {
+        text(&v["en_name"])
+    } else {
+        name
+    };
     Member {
-        id: text(&v["id"]),
-        name: text(&v["name"]),
+        id,
+        name,
         email: text(&v["email"]),
     }
 }
@@ -227,6 +234,91 @@ pub fn normalize_task(v: &Value) -> Task {
 fn field<'a>(app: &'a App, key: &str, fallback: &'a str) -> &'a str {
     app.cfg.value(key, fallback)
 }
+pub fn bitable_configured(app: &App) -> bool {
+    !app.cfg.get("FEISHU_BITABLE_APP_TOKEN").is_empty()
+        || !app.cfg.get("FEISHU_WIKI_NODE_TOKEN").is_empty()
+}
+// New tasks are written into the table the hub collects from. The explicit
+// submit table wins; the legacy tasks-table id is a fallback so deployments
+// that only set the old variable cannot silently create Feishu tasks instead.
+pub fn submit_table(app: &App) -> &str {
+    let submit = app.cfg.get("FEISHU_BITABLE_SUBMIT_TABLE_ID");
+    if submit.is_empty() {
+        app.cfg.get("FEISHU_BITABLE_TASKS_TABLE_ID")
+    } else {
+        submit
+    }
+}
+fn enrich_owners(task: &mut Task, members: &[Member]) {
+    for owner in &mut task.owners {
+        if (owner.name.is_empty() || owner.name == owner.id)
+            && let Some(known) = members.iter().find(|m| m.id == owner.id)
+        {
+            *owner = known.clone();
+        }
+    }
+}
+fn record_members(app: &App, records: &[Value]) -> std::collections::HashMap<String, Member> {
+    let mut names = std::collections::HashMap::new();
+    for v in records {
+        if let Some(list) =
+            v["fields"][field(app, "FEISHU_BITABLE_OWNER_FIELD", "负责人")].as_array()
+        {
+            for entry in list {
+                let id = text(&entry["id"]);
+                if id.is_empty() {
+                    continue;
+                }
+                let name = text(&entry["name"]);
+                let name = if name.is_empty() || name == id {
+                    text(&entry["en_name"])
+                } else {
+                    name
+                };
+                names.entry(id).or_insert(Member {
+                    id: text(&entry["id"]),
+                    name,
+                    email: text(&entry["email"]),
+                });
+            }
+        }
+    }
+    names
+}
+// Feishu's contact API often returns no names for the app's current scopes,
+// but the Bitable person fields carry the display names users chose. Build a
+// directory from those fields so members never display as open_id codes.
+pub async fn bitable_members(
+    app: &App,
+    token: &str,
+) -> anyhow::Result<std::collections::HashMap<String, Member>> {
+    let mut names = std::collections::HashMap::new();
+    if !bitable_configured(app) {
+        return Ok(names);
+    }
+    let b = base(app, token).await?;
+    let tables = pages(
+        app,
+        &format!("/bitable/v1/apps/{b}/tables"),
+        "items",
+        token,
+        false,
+    )
+    .await?;
+    for table in tables {
+        let id = text(&table["table_id"]);
+        let records = pages(
+            app,
+            &format!("/bitable/v1/apps/{b}/tables/{id}/records/search"),
+            "items",
+            token,
+            true,
+        )
+        .await?;
+        names.extend(record_members(app, &records));
+    }
+    Ok(names)
+}
 pub fn record_links(table: &str, value: &Value) -> Vec<String> {
     let mut ids = Vec::new();
     fn collect(value: &Value, ids: &mut Vec<String>) {
@@ -263,7 +355,7 @@ pub fn normalize_record(app: &App, table: &str, v: &Value) -> Option<Task> {
         if f.get(name_field).is_none()
             && f.get(field(app, "FEISHU_BITABLE_PARENT_FIELD", "父记录"))
                 .is_none()
-            && table != app.cfg.get("FEISHU_BITABLE_SUBMIT_TABLE_ID")
+            && table != submit_table(app)
         {
             return None;
         }
@@ -467,8 +559,14 @@ pub async fn create(app: &App, subject: &str, mut input: TaskInput) -> anyhow::R
     }
     if app.cfg.live() {
         let token = user_token(app, subject).await?;
-        let table = app.cfg.get("FEISHU_BITABLE_SUBMIT_TABLE_ID");
-        if !table.is_empty() {
+        let table = submit_table(app);
+        if bitable_configured(app) {
+            anyhow::ensure!(
+                !table.is_empty(),
+                "No Bitable submission table configured; set FEISHU_BITABLE_SUBMIT_TABLE_ID \
+                 (usually the 任务管理表 id) so new tasks land in the base the hub collects from, \
+                 or clear the Bitable tokens to create Feishu tasks instead"
+            );
             let b = base(app, &token).await?;
             let v = call(
                 app,
@@ -669,11 +767,7 @@ async fn collect_tasks(app: &App, token: &str) -> anyhow::Result<usize> {
                 t.status = "cancelled".into();
             }
         }
-        for m in &mut t.owners {
-            if let Some(known) = members.iter().find(|k| k.id == m.id) {
-                *m = known.clone();
-            }
-        }
+        enrich_owners(&mut t, &members);
         tasks.push((t.id.clone(), t));
     }
     let n = tasks.len();
@@ -698,6 +792,9 @@ async fn collect_bitable(app: &App, token: &str) -> anyhow::Result<usize> {
     )
     .await?;
     let mut tasks = Vec::new();
+    let members = app.db.members().await?;
+    let mut known: std::collections::HashMap<String, Member> =
+        members.iter().map(|m| (m.id.clone(), m.clone())).collect();
     for table in tables {
         let id = text(&table["table_id"]);
         let records = pages(
@@ -708,7 +805,21 @@ async fn collect_bitable(app: &App, token: &str) -> anyhow::Result<usize> {
             true,
         )
         .await?;
-        for t in normalize_records(app, &id, records) {
+        let names = record_members(app, &records);
+        for (member_id, member) in names {
+            let real = !(member.name.is_empty() || member.name == member.id);
+            let update = match known.get(&member_id) {
+                None => true,
+                Some(k) if k.name.is_empty() || k.name == k.id => true,
+                Some(_) => real,
+            };
+            if update {
+                app.db.put_member(&member).await?;
+                known.insert(member_id, member);
+            }
+        }
+        for mut t in normalize_records(app, &id, records) {
+            enrich_owners(&mut t, &members);
             tasks.push((t.id.clone(), t));
         }
     }
@@ -882,6 +993,27 @@ pub async fn refresh_members(app: &App, subject: &str) -> anyhow::Result<Value> 
         }
         Err(_) => warnings.push("Group directory unavailable".into()),
     }
+    // The contact API is often scope-limited to ids only; the Bitable person
+    // fields carry the display names users chose, so enrich the directory from
+    // the base the hub already collects.
+    let mut directory = std::collections::HashMap::new();
+    match bitable_members(app, &token).await {
+        Ok(names) => directory = names,
+        Err(e) => warnings.push(format!("Bitable names: {e}")),
+    }
+    let mut own_open_id = String::new();
+    let mut own_name = String::new();
+    if let Ok(me) = call(app, "GET", "/authen/v1/user_info", &token, None).await {
+        own_open_id = text(&me["open_id"]);
+        own_name = text(&me["name"]);
+    }
+    let mut known: std::collections::HashMap<String, Member> = app
+        .db
+        .members()
+        .await?
+        .into_iter()
+        .map(|m| (m.id.clone(), m))
+        .collect();
     let mut count = HashSet::new();
     for v in records {
         let id = if v["open_id"].is_string() {
@@ -893,19 +1025,55 @@ pub async fn refresh_members(app: &App, subject: &str) -> anyhow::Result<Value> 
             continue;
         }
         let mut name = text(&v["name"]);
-        if name.is_empty() {
+        if name.is_empty() || name == id {
+            name = text(&v["en_name"]);
+        }
+        if name.is_empty() || name == id {
+            name = text(&v["nickname"]);
+        }
+        if (name.is_empty() || name == id)
+            && let Some(known) = directory.get(&id)
+        {
+            name = known.name.clone();
+        }
+        if (name.is_empty() || name == id) && id == own_open_id {
+            name = own_name.clone();
+        }
+        if name.is_empty() || name == id {
             name = id.clone();
         }
         let mut email = text(&v["email"]);
         if email.is_empty() {
             email = text(&v["enterprise_email"]);
         }
+        if email.is_empty()
+            && let Some(known) = directory.get(&id)
+        {
+            email = known.email.clone();
+        }
         let m = Member {
             id: id.clone(),
             name,
             email,
         };
-        if count.insert(id) {
+        if count.insert(id.clone()) {
+            let update = match known.get(&id) {
+                None => true,
+                Some(k) if k.name.is_empty() || k.name == k.id => true,
+                Some(k) => {
+                    (k.name != m.name || k.email != m.email)
+                        && !(m.name.is_empty() || m.name == m.id)
+                }
+            };
+            if update {
+                app.db.put_member(&m).await?;
+                known.insert(id, m);
+            }
+        }
+    }
+    for (id, m) in directory {
+        if !count.contains(&id) && !(m.name.is_empty() || m.name == m.id) {
+            count.insert(id.clone());
             app.db.put_member(&m).await?;
         }
     }
@@ -913,10 +1081,10 @@ pub async fn refresh_members(app: &App, subject: &str) -> anyhow::Result<Value> 
 }
 pub async fn options(app: &App, subject: &str) -> anyhow::Result<Value> {
     let mut result = json!({"categories":["步兵（HKU）","哨兵（HKU）","无人机","飞镖","总车组","场地设施","步兵（CUHKSZ）","重装","哨兵（CUHKSZ）"],"divisions":["机械","硬件","算法","电控","管理","宣营"]});
-    if app.cfg.live() && !app.cfg.get("FEISHU_BITABLE_SUBMIT_TABLE_ID").is_empty() {
+    let table = submit_table(app);
+    if app.cfg.live() && !table.is_empty() {
         let token = user_token(app, subject).await?;
         let b = base(app, &token).await?;
-        let table = app.cfg.get("FEISHU_BITABLE_SUBMIT_TABLE_ID");
         for f in pages(
             app,
             &format!("/bitable/v1/apps/{b}/tables/{table}/fields"),

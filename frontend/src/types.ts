@@ -65,6 +65,7 @@ export interface Workload {
   members: {
     id: string;
     name: string;
+    email: string;
     active: number;
     stats: Stats;
     tasks: Task[];

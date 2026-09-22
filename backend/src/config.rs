@@ -4,7 +4,9 @@ use std::{collections::HashMap, env};
 pub struct Config(pub HashMap<String, String>);
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
-        dotenvy::dotenv().ok();
+        if let Err(e) = dotenvy::dotenv() {
+            tracing::warn!(error=%e, "Failed to parse .env; using environment defaults");
+        }
         let cfg = Self(env::vars().collect());
         anyhow::ensure!(
             ["mock", "live"].contains(&cfg.mode()),

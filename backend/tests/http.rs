@@ -335,6 +335,259 @@ async fn task_api_contract_keeps_priority_local_and_uses_milliseconds() {
     assert_eq!(task.priority, "HIGH");
     server.abort();
 }
+
+#[tokio::test]
+async fn live_create_writes_to_the_collected_bitable() {
+    let mut app = app().await;
+    let upstream = Router::new().route(
+        "/open-apis/bitable/v1/apps/base1/tables/tbl-submit/records",
+        axum::routing::post(
+            |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                assert_eq!(headers["authorization"], "Bearer user-secret");
+                assert_eq!(body["fields"]["任务名称"], "Task from hub");
+                assert_eq!(body["fields"]["负责人"], json!([{"id": "ou_user"}]));
+                assert_eq!(body["fields"]["任务状态（由技术组长验收）"], "待执行");
+                axum::Json(json!({"code":0,"data":{"record":{"record_id":"rec-new"}}}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    app.cfg.0.insert("FEISHU_MODE".into(), "live".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_APP_TOKEN".into(), "base1".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_SUBMIT_TABLE_ID".into(), "tbl-submit".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BASE_URL".into(), format!("http://{address}"));
+    provider::save_connection(
+        &app,
+        "subject",
+        "ou_user",
+        &json!({"access_token":"user-secret","expires_at":i64::MAX}),
+    )
+    .await
+    .unwrap();
+    app.db
+        .put_member(&larkai::model::Member {
+            id: "ou_user".into(),
+            name: "Alice".into(),
+            email: "alice@example.com".into(),
+        })
+        .await
+        .unwrap();
+    let task = provider::create(
+        &app,
+        "subject",
+        TaskInput {
+            title: "Task from hub".into(),
+            owner_ids: vec!["ou_user".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(task.id, "bitable:tbl-submit:rec-new");
+    assert_eq!(task.source, "bitable");
+    assert_eq!(task.table_id, "tbl-submit");
+    assert_eq!(task.owners[0].name, "Alice");
+    server.abort();
+}
+
+#[tokio::test]
+async fn live_create_refuses_taskv2_when_bitable_lacks_submit_table() {
+    let mut app = app().await;
+    app.cfg.0.insert("FEISHU_MODE".into(), "live".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_APP_TOKEN".into(), "base1".into());
+    provider::save_connection(
+        &app,
+        "subject",
+        "ou_user",
+        &json!({"access_token":"user-secret","expires_at":i64::MAX}),
+    )
+    .await
+    .unwrap();
+    let error = provider::create(
+        &app,
+        "subject",
+        TaskInput {
+            title: "Must not create".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("FEISHU_BITABLE_SUBMIT_TABLE_ID"));
+    assert!(app.db.tasks().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn api_reports_missing_submit_table_as_bad_request() {
+    let mut app = app().await;
+    app.cfg.0.insert("FEISHU_MODE".into(), "live".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_APP_TOKEN".into(), "base1".into());
+    let session = Session {
+        id: "submit-missing".into(),
+        subject: "submit-user".into(),
+        role: "member".into(),
+        csrf: "submit-csrf".into(),
+        ..Default::default()
+    };
+    save(&app, &session).await.unwrap();
+    provider::save_connection(
+        &app,
+        "submit-user",
+        "ou_user",
+        &json!({"access_token":"token","expires_at":i64::MAX}),
+    )
+    .await
+    .unwrap();
+    let router = web::router(app);
+    let (status, _, body) = request(
+        &router,
+        "POST",
+        "/api/tasks",
+        "larkai=submit-missing",
+        "submit-csrf",
+        Some(json!({"title":"No table"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("FEISHU_BITABLE_SUBMIT_TABLE_ID")
+    );
+}
+
+#[tokio::test]
+async fn live_create_uses_tasks_table_id_as_submit_fallback() {
+    let mut app = app().await;
+    let upstream = Router::new().route(
+        "/open-apis/bitable/v1/apps/base1/tables/tbl-tasks/records",
+        axum::routing::post(|| async {
+            axum::Json(json!({"code":0,"data":{"record":{"record_id":"rec-fb"}}}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    app.cfg.0.insert("FEISHU_MODE".into(), "live".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_APP_TOKEN".into(), "base1".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_TASKS_TABLE_ID".into(), "tbl-tasks".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BASE_URL".into(), format!("http://{address}"));
+    provider::save_connection(
+        &app,
+        "subject",
+        "ou_user",
+        &json!({"access_token":"token","expires_at":i64::MAX}),
+    )
+    .await
+    .unwrap();
+    let task = provider::create(
+        &app,
+        "subject",
+        TaskInput {
+            title: "Fallback".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(task.id, "bitable:tbl-tasks:rec-fb");
+    assert_eq!(task.table_id, "tbl-tasks");
+    server.abort();
+}
+
+#[tokio::test]
+async fn refresh_members_enriches_names_from_bitable_and_self() {
+    use axum::{extract::Query, routing::get};
+    use std::collections::HashMap;
+    let upstream = Router::new()
+        .route(
+            "/open-apis/contact/v3/users/find_by_department",
+            get(|Query(_q): Query<HashMap<String, String>>| async {
+                axum::Json(json!({"code":0,"data":{"items":[
+                    {"open_id":"ou_x"},
+                    {"open_id":"ou_admin"}
+                ]}}))
+            }),
+        )
+        .route(
+            "/open-apis/contact/v3/departments/0/children",
+            get(|| async { axum::Json(json!({"code":0,"data":{"items":[]}})) }),
+        )
+        .route(
+            "/open-apis/im/v1/chats",
+            get(|| async { axum::Json(json!({"code":0,"data":{"items":[]}})) }),
+        )
+        .route(
+            "/open-apis/bitable/v1/apps/base1/tables",
+            get(|| async { axum::Json(json!({"code":0,"data":{"items":[{"table_id":"tbl1"}]}})) }),
+        )
+        .route(
+            "/open-apis/bitable/v1/apps/base1/tables/tbl1/records/search",
+            axum::routing::post(|| async {
+                axum::Json(json!({"code":0,"data":{"items":[
+                    {"record_id":"r1","fields":{"任务名称":"T","负责人":[
+                        {"id":"ou_x","name":"王小明","en_name":"Xiao Ming","email":"xm@example.com"},
+                        {"id":"ou_bitable_only","name":"仅表格成员","email":"b@example.com"}
+                    ]}}
+                ],"has_more":false}}))
+            }),
+        )
+        .route(
+            "/open-apis/authen/v1/user_info",
+            get(|| async {
+                axum::Json(json!({"code":0,"data":{"open_id":"ou_admin","name":"管理员"}}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let mut app = app().await;
+    app.cfg.0.insert("FEISHU_MODE".into(), "live".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BITABLE_APP_TOKEN".into(), "base1".into());
+    app.cfg
+        .0
+        .insert("FEISHU_BASE_URL".into(), format!("http://{address}"));
+    provider::save_connection(
+        &app,
+        "subject",
+        "ou_admin",
+        &json!({"access_token":"token","expires_at":i64::MAX}),
+    )
+    .await
+    .unwrap();
+    let result = provider::refresh_members(&app, "subject").await.unwrap();
+    assert_eq!(result["count"], 3);
+    let members = app.db.members().await.unwrap();
+    let by_id: std::collections::HashMap<_, _> =
+        members.iter().map(|m| (m.id.as_str(), m)).collect();
+    assert_eq!(by_id["ou_x"].name, "王小明");
+    assert_eq!(by_id["ou_x"].email, "xm@example.com");
+    assert_eq!(by_id["ou_admin"].name, "管理员");
+    assert_eq!(by_id["ou_bitable_only"].name, "仅表格成员");
+    server.abort();
+}
+
 #[tokio::test]
 async fn bitable_actions_target_the_records_own_table() {
     let mut app = app().await;

@@ -132,7 +132,7 @@ export function TaskSummary({ task }: { task: Task }) {
       <div>
         <strong>{task.title}</strong>
         <small>
-          {task.owners.map((m) => m.name || m.id).join(", ") || t("Unassigned")}{" "}
+          {task.owners.map((m) => m.name || m.email || m.id).join(", ") || t("Unassigned")}{" "}
           · {formatDate(task.due, locale)}
         </small>
       </div>

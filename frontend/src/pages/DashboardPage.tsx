@@ -46,7 +46,7 @@ export function DashboardPage({ revision }: { revision: number }) {
           tasks.forEach((task) =>
             task.owners.forEach((owner) => {
               const member = members.get(owner.id) || {
-                name: owner.name || owner.id,
+                name: owner.name || owner.email || owner.id,
                 tasks: [],
               };
               member.tasks.push(task);
@@ -131,7 +131,7 @@ export function DashboardPage({ revision }: { revision: number }) {
                           <strong>{task.title}</strong>
                           <small>
                             {task.owners
-                              .map((owner) => owner.name || owner.id)
+                              .map((owner) => owner.name || owner.email || owner.id)
                               .join(", ") || t("Unassigned")}{" "}
                             · {formatDate(task.due, locale)}
                           </small>

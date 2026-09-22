@@ -140,6 +140,7 @@ test("task graph separates hierarchy, edits dependencies, rejects cycles and wor
       name: "Hide completed and cancelled",
       exact: true,
     });
+    await page.getByRole("button", { name: "Expand all", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Test DAG project", exact: true }),
     ).toBeVisible();

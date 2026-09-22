@@ -176,7 +176,15 @@ async fn create(
     auth::require_connection(&app, &s).await?;
     input.validate().map_err(Error::bad)?;
     let _lock = app.sync_lock.lock().await;
-    let t = provider::create(&app, &s.subject, input).await?;
+    let t = provider::create(&app, &s.subject, input)
+        .await
+        .map_err(|e| {
+            if let Some(fe) = e.downcast_ref::<provider::FeishuError>() {
+                Error(StatusCode::BAD_GATEWAY, fe.to_string())
+            } else {
+                Error::bad(e.to_string())
+            }
+        })?;
     notify::task(&app, "created", &t, &s.name).await;
     Ok((StatusCode::CREATED, Json(t)))
 }
@@ -279,7 +287,7 @@ async fn timeline(State(app): State<App>, Query(f): Query<Filter>) -> Result<Jso
 }
 async fn workload(State(app): State<App>) -> Result<Json<Value>> {
     let tasks = app.db.tasks().await?;
-    let mut people: std::collections::BTreeMap<String, (String, Vec<Task>)> =
+    let mut people: std::collections::BTreeMap<String, (String, String, Vec<Task>)> =
         std::collections::BTreeMap::new();
     for t in &tasks {
         for m in &t.owners {
@@ -298,13 +306,14 @@ async fn workload(State(app): State<App>) -> Result<Json<Value>> {
                     } else {
                         m.name.clone()
                     },
+                    m.email.clone(),
                     vec![],
                 )
             });
-            entry.1.push(t.clone());
+            entry.2.push(t.clone());
         }
     }
-    let mut members:Vec<_>=people.into_iter().map(|(id,(name,t))|json!({"id":id,"name":name,"active":t.iter().filter(|t|t.active()).count(),"stats":stats(&t),"tasks":t})).collect();
+    let mut members:Vec<_>=people.into_iter().map(|(id,(name,email,t))|json!({"id":id,"name":name,"email":email,"active":t.iter().filter(|t|t.active()).count(),"stats":stats(&t),"tasks":t})).collect();
     members.sort_by_key(|m| std::cmp::Reverse(m["active"].as_u64().unwrap_or(0)));
     Ok(Json(
         json!({"members":members,"unassigned":tasks.iter().filter(|t|t.owners.is_empty()).count()}),
