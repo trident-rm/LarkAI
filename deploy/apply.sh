@@ -44,7 +44,7 @@ if [ -s incoming/runtime.env ]; then
 fi
 [ -s .env ] || { echo 'Provision .env or the production LARKAI_ENV secret first' >&2; exit 1; }
 # Only digest references are accepted; tags are build outputs, never deployment inputs.
-grep -Eq '^LARKAI_IMAGE=ghcr.io/fantastic-octo-barnacle/larkai@sha256:[a-f0-9]{64}$' incoming/image.env
+grep -Eq '^LARKAI_IMAGE=ghcr.io/trident-rm/larkai@sha256:[a-f0-9]{64}$' incoming/image.env
 compose() { docker compose --project-directory "$PWD" --env-file .env --env-file "$1" -f "$2" "${@:3}"; }
 
 compose incoming/image.env incoming/compose.yml config --quiet
