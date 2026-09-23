@@ -47,7 +47,7 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          tags: ghcr.io/fantastic-octo-barnacle/larkai:sha-${{ github.sha }}
+          tags: ghcr.io/trident-rm/larkai:sha-${{ github.sha }}
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -95,7 +95,7 @@ jobs:
           remote="$DEPLOY_USER@$DEPLOY_HOST"
           ssh_opts=(-i ~/.ssh/deploy -o BatchMode=yes -o StrictHostKeyChecking=yes)
           ssh "${ssh_opts[@]}" "$remote" 'umask 077; mkdir -p ~/larkai/incoming'
-          printf 'LARKAI_IMAGE=ghcr.io/fantastic-octo-barnacle/larkai@%s\n' "$IMAGE_DIGEST" > image.env
+          printf 'LARKAI_IMAGE=ghcr.io/trident-rm/larkai@%s\n' "$IMAGE_DIGEST" > image.env
           umask 077
           python3 deploy/runtime_env.py
           trap 'rm -f runtime.env ~/.ssh/deploy' EXIT
